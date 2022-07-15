@@ -1,26 +1,21 @@
-import { MockServer } from "@r35007/mock-server-lite";
-import { getJSON } from "@r35007/mock-server-lite/dist/server/utils/fetch";
+import { HAR, PathDetails } from '@r35007/mock-server-lite/dist/server/types/common.types';
+import { Db } from '@r35007/mock-server-lite/dist/server/types/valid.types';
+import { getFilesList, requireData } from "@r35007/mock-server-lite/dist/server/utils/fetch";
 import axios from 'axios';
-import { watch, FSWatcher } from 'chokidar';
+import { watch } from 'chokidar';
 import * as fs from "fs";
+import { FSWatcher } from 'node:fs';
 import * as path from "path";
 import * as vscode from "vscode";
-import { TRANSFORM_TO_MOCK_SERVER_DB } from './enum';
+import { Commands } from './enum';
 import { Prompt } from "./prompt";
 import { Settings } from "./Settings";
 
 
 export class Utils {
-  mockServer: MockServer;
   environment = "none";
-  output;
 
   watcher: FSWatcher | undefined;
-
-  constructor() {
-    this.mockServer = new MockServer({ root: Settings.paths.root });
-    this.output = vscode.window.createOutputChannel("Mock Server Log");
-  }
 
   protected getEditorProps = () => {
     const editor = vscode.window.activeTextEditor;
@@ -44,9 +39,9 @@ export class Utils {
     if (editorProps) {
       const { editor, document, textRange, editorText } = editorProps;
 
-      if ((action === TRANSFORM_TO_MOCK_SERVER_DB) && !editorProps.editorText.trim().length) {
+      if ((action === Commands.TRANSFORM_TO_MOCK_SERVER_DB) && !editorProps.editorText.trim().length) {
         const extension = path.extname(path.resolve(document.fileName));
-        if (extensions.indexOf(extension) < 0) return false;
+        if (extensions.indexOf(extension) < 0) { return false; }
       }
 
       if (noPrompt) {
@@ -97,37 +92,74 @@ export class Utils {
     }
   };
 
-  protected getDataFromUrl = async (dbPath?: string) => {
-    if (!dbPath) return;
-    if (dbPath.startsWith("http")) {
-      const data = await axios.get(dbPath).then(resp => resp.data).catch(_err => { });
-      return data;
-    } else {
-      return getJSON(dbPath);
+  protected getDbWithEnv = async (dbPath?: string) => {
+    if (!dbPath) { return; }
+    const environmentList = this.getEnvironmentList(Settings.paths.envDir);
+    const environment = this.environment.toLowerCase();
+
+    if (!environment.trim().length || environment === "none" || !environmentList.find((e) => e.fileName === environment)) {
+      Settings.environment = "none";
+      const dbData = await this.getDataFromUrl(dbPath);
+      return dbData;
     }
-  }
 
-  protected restartOnChange = (restart: Function) => {
+    Settings.environment = environment;
+
+    const dbData = await this.getDataFromUrl(dbPath);
+    const envPath = environmentList.find((e) => e.fileName === environment)!.filePath;
+
+    const userData = requireData(envPath, Settings.rootPath) as HAR;
+    const envData = this.isPlainObject(userData) ? userData : {};
+
+    return { ...envData, ...dbData, ...envData };
+  };
+
+  protected getDataFromUrl = async (mockPath: string) => {
+    if (mockPath.startsWith("http")) {
+      const data = await axios.get(mockPath).then(resp => resp.data).catch(_err => { });
+      return data || {};
+    } else {
+      const data = requireData(mockPath, Settings.rootPath);
+      return typeof data === 'function' ? await data() : data || {};
+    }
+  };
+
+  protected getEnvironmentList = (envDir: string = '') => getFilesList(envDir)
+    .filter(file => [".har", ".json"].includes(file.extension))
+    .map(file => ({ ...file, fileName: file.fileName.toLowerCase() }));
+
+  protected restartOnChange = (restart: Function, db: Db = {}) => {
+
+    const filesToWatch = [
+      Settings.paths.db,
+      Settings.paths.middleware,
+      Settings.paths.injectors,
+      Settings.paths.rewriters,
+      Settings.paths.store,
+      Settings.paths.staticDir,
+      Settings.paths.envDir,
+      ...Settings.watchForChanges,
+    ]
+      .filter(p => !p?.startsWith("http")).filter(Boolean)
+      .reduce((paths, p) => [...paths, ...getFilesList(p!)], [] as PathDetails[])
+      .filter(p => p.isFile)
+      .map(p => p.filePath);
+
     if (!this.watcher) {
-      const filesToWatch = ([
-        Settings.paths.db,
-        Settings.paths.middleware,
-        Settings.paths.injectors,
-        Settings.paths.rewriters,
-        Settings.paths.store,
-        Settings.paths.staticDir,
-      ]).filter(p => !p?.startsWith("http")).filter(Boolean) as string[];
-
-      this.watcher = watch(filesToWatch);
+      this.watcher = watch([...new Set(filesToWatch)]);
       this.watcher.on('change', (_event, _path) => {
         restart();
       });
     }
-  }
+  };
 
   protected stopWatchingChanges = async () => {
     this.watcher && await this.watcher.close();
     this.watcher = undefined;
-  }
+  };
+
+  protected isPlainObject = (obj: any) => {
+    return obj && typeof obj === 'object' && !Array.isArray(obj);
+  };
 }
 

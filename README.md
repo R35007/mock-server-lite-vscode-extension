@@ -1,4 +1,4 @@
-# Mock Server Lite[](#mock-server-lite) [![](https://img.shields.io/npm/v/@r35007/mock-server-lite)](https://img.shields.io/npm/l/@r35007/mock-server?color=blue) [![](https://img.shields.io/npm/types/@r35007/mock-server)](https://img.shields.io/npm/types/@r35007/mock-server)
+# Mock Server Lite[](#mock-server) [![](https://img.shields.io/npm/l/@r35007/mock-server-lite?color=blue)](https://img.shields.io/npm/l/@r35007/mock-server-lite?color=blue) [![](https://img.shields.io/npm/types/@r35007/mock-server-lite)](https://img.shields.io/npm/types/@r35007/mock-server-lite)
 
 Get a full REST API with **zero coding** in **less than 30 seconds** (seriously)
 
@@ -7,27 +7,32 @@ Created with <3 for front-end developers who need a quick back-end for prototypi
 This Extension is built upon node package `@r35007/mock-server`.
 
 This is a liter version of [Mock Server](https://github.com/R35007/mock-server)
-
 ## Table of contents
 
+- [Table of contents](#table-of-contents)
 - [Getting started](#getting-started)
 - [Commands](#commands)
-  - [Start Server](#start-server)
-  - [Stop Server](#stop-server)
-  - [Get Db Snapshot](#get-db-snapshot)
-  - [Transform to Mock Server Db](#transform-to-mock-server-db)
-  - [Generate Mock Files](#generate-mock-files)
+  - [`Start Server`](#start-server)
+  - [`Stop Server`](#stop-server)
+  - [`Reset Server`](#reset-server)
+  - [`Reset and Restart Server`](#reset-and-restart-server)
+  - [`Set Port`](#set-port)
+  - [`Set Root`](#set-root)
+  - [`Switch Environment`](#switch-environment)
+  - [`Get Db Snapshot`](#get-db-snapshot)
+  - [`Transform to Mock Server Db`](#transform-to-mock-server-db)
+  - [`Generate Mock Files`](#generate-mock-files)
 - [Settings](#settings)
-  - [Set Custom Port](#set-custom-port)
-  - [Set Custom host](#set-custom-host)
-  - [Set Base Path](#set-base-path)
-  - [Set Db Id](#set-db-id)
-  - [Set Data Paths](#set-data-paths)
-    - [DB](#db)
-    - [Middleware](#middleware)
-    - [Injectors](#injectors)
-    - [Route Rewriters](#route-rewriters)
-    - [Static File Server](#static-file-server)
+  - [`Set Custom Port`](#set-custom-port)
+  - [`Set Custom Host`](#set-custom-host)
+  - [`Set Base Path`](#set-base-path)
+  - [`Set Db Id`](#set-db-id)
+  - [`Set Data Paths`](#set-data-paths)
+  - [DB](#db)
+  - [Middleware](#middleware)
+  - [Injectors](#injectors)
+  - [Route Rewriters](#route-rewriters)
+  - [Static File Server](#static-file-server)
 - [Documentation](#documentation)
 - [Author](#author)
 - [License](#license)
@@ -57,6 +62,38 @@ Mock Server can be started in three ways.
 
 - From Command Palette (`(Ctrl/Cmd)+Shift+P`) type mock and select `MockServer: Stop Server`.
 - ShortCut using `Shift+Alt+Enter`
+
+### `Reset Server`
+
+- From Command Palette (`(Ctrl/Cmd)+Shift+P`) type mock and select `MockServer: Reset Server`.
+- This command clears all server cache and reset all data
+
+### `Reset and Restart Server`
+
+- From Command Palette (`(Ctrl/Cmd)+Shift+P`) type mock and select `MockServer: Reset and Restart Server`.
+- This command clears all server cache, reset all data and start the mock server in a new instance.
+
+### `Set Port`
+
+- From Command Palette (`(Ctrl/Cmd)+Shift+P`) type mock and select `MockServer: Set Port`.
+- This command helps prompts and sets the custom port to start the server.
+
+### `Set Root`
+
+- From Command Palette (`(Ctrl/Cmd)+Shift+P`) type mock and select `MockServer: Set as Server Root Folder`.
+- This command helps sets the current selected file or folder as a Server root folder.
+
+### `Switch Environment`
+
+Helps to work in multiple data environments.
+
+- Create `env` folder in root.
+- Keep you different db data of extension `.json` or `.har`
+- From Command Palette (`(Ctrl/Cmd)+Shift+P`) type mock and select `MockServer: Switch Environment`
+- Use`Alt+S` shortcut to switch environment.
+- Now All the `.json` will be listed down. You can pick a data to launch the server.
+- Note `.har` will automatically converted into `.json` with a valid db routes.
+- This path can be modified using the settings `mock-server.settings.paths.envDir`.
 
 ### `Get Db Snapshot`
 
@@ -109,6 +146,7 @@ Mock Server can be started in three ways.
   "rewriters": "rewriters.json", // path to rewriters file
   "store": "store.json", // path to store file
   "staticDir": "public", // path to static file server.
+  "envDir": "env" // path to env. on `MockServer: Switch Environment` Command, picks all the .json files under this directory.
 }
 ```
 
@@ -134,26 +172,45 @@ Mock Server can be started in three ways.
 
 ```js
 /* 
+  Global Middlewares
+  These middlewares will be added to start of the the express app 
+*/
+exports._globals = [
+  (req, res, next) => {
+    console.log(req.path);
+    next();
+  },
+];
+
+/* 
   Used in VS Code Mock Server extension
   This method is called only on generating db suing MockServer: Generate Db Command
-  It will be called for each entry in a HAR formatted data
+  It will be called for each entry/hits in a HAR/Kibana formatted data
   Here you can return your custom route and routeConfig
-  `entryCallback` is a reserved word for generating Db 
+  `_harEntryCallback`, `_kibanaHitsCallback` is a reserved word for generating Db 
 */
-exports.entryCallback = (entry, routePath, routeConfig) => {
+exports._harEntryCallback = (entry, routePath, routeConfig) => {
   // your code goes here ...
-  return { [routePath]: routeConfig }
+  return { [routePath]: routeConfig };
+};
+exports._kibanaHitsCallback = (hit, routePath, routeConfig) => {
+  // your code goes here ...
+  return { [routePath]: routeConfig };
 };
 
 /* 
   Used in VS Code Mock Server extension
   This method is called only on generating db suing MockServer: Generate Db Command
-  It will be called at last of all entry looping.
+  It will be called at last of all entry/hits looping.
   Here you can return your custom db
   Whatever you return here will be pasted in the file
-  `finalCallback` is a reserved word for generating Db
+  `_harDbCallback`, `_kibanaDbCallback` is a reserved word for generating Db
 */
-exports.finalCallback = (data, db) => {
+exports._harDbCallback = (data, db) => {
+  // your code goes here ...
+  return db;
+};
+exports._kibanaDbCallback = (data, db) => {
   // your code goes here ...
   return db;
 };
@@ -165,7 +222,7 @@ exports.finalCallback = (data, db) => {
     "/customMiddleware": {
     "_config": true,
     "fetch": "http://jsonplaceholder.typicode.com/users",
-    "middlewareNames": [
+    "middlewares": [
       "DataWrapper"
     ]
   }
@@ -175,9 +232,9 @@ exports.finalCallback = (data, db) => {
 exports.DataWrapper = (req, res, next) => {
   res.locals.data = {
     status: "Success",
-    message: "Retrived Successfully",
-    result: res.locals.data
-  }
+    message: "Retrieved Successfully",
+    result: res.locals.data,
+  };
   next();
 };
 
@@ -188,7 +245,8 @@ exports.CustomLog = (req, res, next) => {
 
 // Access store value
 exports.GetStoreValue = (req, res, next) => {
-  res.locals.data = "The store value is : " + res.locals.store.data;
+  const store = res.locals.getStore();
+  res.locals.data = "The store value is : " + store.data;
   next();
 };
 ```
@@ -205,37 +263,34 @@ exports.GetStoreValue = (req, res, next) => {
 ```jsonc
 [
   {
-    "routeToMatch": "/injectors/:id",
+    "routes": ["/injectors/:id"],
     "description": "This description is injected using the injectors by matching the pattern '/injectors/:id'."
   },
   {
-    "routeToMatch": "/injectors/1",
+    "routes": ["/injectors/1"],
     "override": true,
     "mock": "This data is injected using the injectors by matching the pattern '/injectors/1'."
   },
   {
-    "routeToMatch": "/injectors/2",
+    "routes": ["/injectors/2"],
     "override": true,
     "mock": "This data is injected using the injectors by matching the pattern '/injectors/2'."
   },
   {
-    "routeToMatch": "/injectors/:id",
+    "routes": ["/injectors/:id"],
     "override": true,
     "exact": true,
     "statusCode": 200,
     "mock": "This data is injected using the injectors by exactly matching the route '/injectors/:id'."
   },
   {
-    "routeToMatch": "/(.*)",
+    "routes": ["/(.*)"],
     "description": "This Description is injected using the injectors. Set 'Override' flag to true to override the existing config values."
   },
   {
-    "routeToMatch": "/(.*)",
+    "routes": ["/(.*)"],
     "override": true,
-    "middlewareNames": [
-      "...",
-      "CustomLog"
-    ]
+    "middlewares": ["...", "CustomLog"]
   }
 ]
 ```
@@ -279,15 +334,15 @@ Now you can access resources using /api/
 - Now when you start the server, all files under this folder will be automatically hosted in the file server.
 - Set Custom directory using `mock-server.settings.paths.staticDir`
 
-## **Documentation**
+## Documentation
 
-- ReadMe - [https://r35007.github.io/Mock-Server-Lite/](https://r35007.github.io/Mock-Server-Lite/)
+- ReadMe - [https://r35007.github.io/Mock-Server/](https://r35007.github.io/Mock-Server/)
 
 ## Author
 
-**Sivaraman** - [sendmsg2siva.siva@gmail.com](sendmsg2siva.siva@gmail.com)
+Sivaraman - [sendmsg2siva.siva@gmail.com](sendmsg2siva.siva@gmail.com)
 
-- _GitHub_ - [https://github.com/R35007/Mock-Server-Lite](https://github.com/R35007/Mock-Server-Lite)
+- _GitHub_ - [https://github.com/R35007/Mock-Server](https://github.com/R35007/Mock-Server)
 
 ## License
 

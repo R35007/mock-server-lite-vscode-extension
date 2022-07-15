@@ -1,5 +1,14 @@
-export const TRANSFORM_TO_MOCK_SERVER_DB = "mockServer.transformToMockServerDB";
-export const GENERATE_MOCK_FILES = "mockServer.generateMockFiles";
-export const START_SERVER = "mockServer.startServer";
-export const STOP_SERVER = "mockServer.stopServer";
-export const GET_DB_SNAPSHOT = "mockServer.getDbSnapShot";
+/* eslint-disable @typescript-eslint/naming-convention */
+
+export enum Commands {
+  TRANSFORM_TO_MOCK_SERVER_DB = "mockServer.transformToMockServerDB",
+  GENERATE_MOCK_FILES = "mockServer.generateMockFiles",
+  START_SERVER = "mockServer.startServer",
+  STOP_SERVER = "mockServer.stopServer",
+  RESET_SERVER = "mockServer.resetServer",
+  RESET_AND_RESTART = "mockServer.resetAndRestart",
+  SWITCH_ENVIRONMENT = "mockServer.switchEnvironment",
+  GET_DB_SNAPSHOT = "mockServer.getDbSnapShot",
+  SET_PORT = "mockServer.setPort",
+  SET_ROOT = "mockServer.setRoot"
+}

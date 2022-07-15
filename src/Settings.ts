@@ -1,9 +1,13 @@
-import { Config, User_Middleware } from "@r35007/mock-server-lite/dist/server/model";
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
+import { HarMiddleware, KibanaMiddleware } from '@r35007/mock-server-lite/dist/server/types/common.types';
+import * as UserTypes from "@r35007/mock-server-lite/dist/server/types/user.types";
 
 export class Settings {
+
+  static pathsLog = vscode.window.createOutputChannel("Mock Server Paths Log");
+  static configLog = vscode.window.createOutputChannel("Mock Server Config Log");
 
   static get configuration() {
     return vscode.workspace.getConfiguration("mock-server.settings");
@@ -17,6 +21,9 @@ export class Settings {
   static get port() {
     return (Settings.getSettings("port") as number) || 3000;
   }
+  static set port(value: number) {
+    Settings.setSettings("port", value || 3000);
+  }
   static get host() {
     return (Settings.getSettings("host") as string) || 'localhost';
   }
@@ -25,6 +32,12 @@ export class Settings {
   }
   static get id() {
     return Settings.getSettings("id") as string || 'id';
+  }
+  static get environment() {
+    return Settings.getSettings("environment") as string || "none";
+  }
+  static set environment(env: string) {
+    Settings.setSettings("environment", env ? env.toLowerCase() : "none");
   }
   static get defaults() {
     return Settings.getSettings("defaults") as {
@@ -42,53 +55,79 @@ export class Settings {
       priority: number;
     };
   }
-  static get paths() {
-    const root = Settings.getValidPath(Settings.getSettings("paths.root") as string, "./") || 
-      vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || "./";
-    return {
-      root,
-      db: Settings.getValidPath(Settings.getSettings("paths.db") as string, "db.json", root),
-      middleware: Settings.getValidPath(Settings.getSettings("paths.middleware") as string, "middleware.js", root),
-      injectors: Settings.getValidPath(Settings.getSettings("paths.injectors") as string, "injectors.json", root),
-      store: Settings.getValidPath(Settings.getSettings("paths.store") as string, "store.json", root),
-      rewriters: Settings.getValidPath(Settings.getSettings("paths.rewriters") as string, "rewriter.json", root),
-      staticDir: Settings.getValidPath(Settings.getSettings("paths.staticDir") as string, "public", root),
-      snapshotDir: Settings.getValidPath(Settings.getSettings("paths.snapshotDir") as string, "snapshots", root)
+  static get rootPath() {
+    const rootPath = Settings.getSettings("paths.root") as string;
+    const resolvedRootPath = path.resolve((vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || "./"), rootPath);
+    if (!fs.existsSync(resolvedRootPath)) {
+      Settings.pathsLog.appendLine(`Invalid root Path : ` + resolvedRootPath);
+      return path.resolve(vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || "./");
     }
+    return resolvedRootPath;
+  }
+  static set rootPath(root: string) {
+    Settings.setSettings("paths", {
+      ...(Settings.getSettings("paths") as object || {}),
+      root,
+    });
+  }
+  static get paths() {
+    Settings.pathsLog.clear();
+    const paths = {
+      root: Settings.rootPath,
+      db: Settings.getValidPath('db', Settings.getSettings("paths.db") as string, "db.json"),
+      middleware: Settings.getValidPath('middleware', Settings.getSettings("paths.middleware") as string, "middleware.js"),
+      injectors: Settings.getValidPath('injectors', Settings.getSettings("paths.injectors") as string, "injectors.json"),
+      store: Settings.getValidPath('store', Settings.getSettings("paths.store") as string, "store.json"),
+      rewriters: Settings.getValidPath('rewriters', Settings.getSettings("paths.rewriters") as string, "rewriter.json"),
+      envDir: Settings.getValidPath('envDir', Settings.getSettings("paths.envDir") as string, "env"),
+      staticDir: Settings.getValidPath('staticDir', Settings.getSettings("paths.staticDir") as string, "public"),
+      snapshotDir: Settings.getValidPath('snapshotDir', Settings.getSettings("paths.snapshotDir") as string, "snapshots") || path.resolve(Settings.rootPath, "snapshots")
+    };
+    Settings.pathsLog.appendLine("\n");
+    Settings.pathsLog.appendLine(JSON.stringify(paths, null, 2));
+    return paths;
   }
   static get middleware() {
     const middlewarePath = Settings.paths.middleware;
     if (middlewarePath) {
       delete require.cache[middlewarePath];
-      return require(middlewarePath) as User_Middleware;
+      return require(middlewarePath) as UserTypes.Middlewares;
     }
   }
-  static get entryCallback() {
+  static get callbacks() {
     const middleware = Settings.middleware;
     if (middleware) {
-      return middleware["entryCallback"] as any;
-    }
-  }
-  static get finalCallback() {
-    const middleware = Settings.middleware;
-    if (middleware) {
-      return middleware["finalCallback"] as any;
+      return {
+        _harEntryCallback: middleware["_harEntryCallback"] as HarMiddleware["_harEntryCallback"],
+        _harDbCallback: middleware["_harDbCallback"] as HarMiddleware["_harDbCallback"],
+        _kibanaHitsCallback: middleware["_kibanaHitsCallback"] as KibanaMiddleware["_kibanaHitsCallback"],
+        _kibanaDbCallback: middleware["_kibanaDbCallback"] as KibanaMiddleware["_kibanaDbCallback"]
+      };
     }
   }
   static get reverse() {
     return Settings.getSettings("reverse") as boolean;
   }
-  static get config(): Config {
-    return {
+  static get allowDuplicates() {
+    return Settings.getSettings("allowDuplicates") as boolean;
+  }
+  static get watchForChanges(): string[] {
+    return Settings.getSettings("watchForChanges") as string[] || [];
+  }
+  static get config(): UserTypes.Config {
+    const config = {
       port: Settings.port,
       host: Settings.host,
       id: Settings.id,
-      root: Settings.paths.root,
+      root: Settings.rootPath,
       base: Settings.base,
       reverse: Settings.reverse,
       staticDir: Settings.paths.staticDir || "/public",
       ...Settings.defaults
     };
+    Settings.configLog.clear();
+    Settings.configLog.appendLine(JSON.stringify(config, null, 2));
+    return config;
   }
   static get showInfoMsg() {
     return Settings.getSettings("showInfoMsg") as boolean;
@@ -96,10 +135,16 @@ export class Settings {
   static set showInfoMsg(val: boolean) {
     Settings.setSettings("showInfoMsg", val);
   }
-  static getValidPath(relativePath: string, defaults: string, rootPath?: string) {
-    if (relativePath.startsWith("http")) return relativePath;
-    const root = rootPath || vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || "./";
-    const resolvedPath = path.resolve(root, relativePath?.trim() || defaults);
-    if (fs.existsSync(resolvedPath)) return resolvedPath;
+  static getValidPath(type: string, relativePath: string, defaults: string) {
+    if (relativePath.startsWith("http")) { return relativePath; }
+    const resolvedPath = path.resolve(Settings.rootPath, relativePath?.trim() || defaults);
+
+    if (!fs.existsSync(resolvedPath)) {
+      Settings.pathsLog.appendLine(`Invalid ${type} Path : ` + resolvedPath);
+      return;
+    }
+
+    Settings.pathsLog.appendLine(`${type} Path : ` + resolvedPath);
+    return resolvedPath;
   }
 }

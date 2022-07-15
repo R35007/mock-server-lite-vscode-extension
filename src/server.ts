@@ -1,142 +1,204 @@
-import { Db } from "@r35007/mock-server-lite/dist/server/model";
-import { createSampleFiles, getDbSnapShot } from "@r35007/mock-server-lite/dist/server/utils";
-import { TRANSFORM_TO_MOCK_SERVER_DB } from './enum';
-import { Prompt } from "./prompt";
-import { Settings } from "./Settings";
-import { StatusbarUi } from "./StatusBarUI";
-import { Utils } from "./utils";
-import * as path from "path";
+import { MockServer } from "@r35007/mock-server-lite";
+import { HAR, KIBANA } from '@r35007/mock-server-lite/dist/server/types/common.types';
+import * as UserTypes from "@r35007/mock-server-lite/dist/server/types/user.types";
+import * as ValidTypes from "@r35007/mock-server-lite/dist/server/types/valid.types";
+import { cleanDb, createSampleFiles, extractDbFromHAR, extractDbFromKibana } from '@r35007/mock-server-lite/dist/server/utils';
+import { requireData } from '@r35007/mock-server-lite/dist/server/utils/fetch';
+import * as fs from 'fs';
+import * as path from 'path';
+import { Commands } from './enum';
+import { Prompt } from './prompt';
+import { Settings } from './Settings';
+import { StatusbarUi } from './StatusBarUI';
+import { Utils } from './utils';
 
-export default class MockServer extends Utils {
-  constructor() {
+export default class MockServerExt extends Utils {
+  mockServer!: MockServer;
+  log: Function;
+
+  constructor(output: Function) {
     super();
-    this.output.appendLine("\nMock Server Server Initiated");
+    this.log = output;
+    this.createServer();
     StatusbarUi.init();
+    this.log('Mock Server Server Initiated', "\n");
   }
 
+  createServer = () => {
+    this.mockServer = new MockServer({ root: Settings.rootPath });
+  };
+
+  destroyServer = async () => {
+    await MockServer.Destroy(this.mockServer);
+  };
+
+  resetServer = async () => {
+    StatusbarUi.working('Resetting...');
+    await this.destroyServer();
+    this.createServer();
+  };
+
   transformToMockServerDB = async (args?: any) => {
-    this.output.appendLine(`\n[${new Date().toLocaleTimeString()}] [Running] Data Transform initiated`);
-    const writable = await this.getWritable([".json"], TRANSFORM_TO_MOCK_SERVER_DB, args?.fsPath);
+    const writable = await this.getWritable(['.json'], Commands.TRANSFORM_TO_MOCK_SERVER_DB, args?.fsPath);
     if (writable) {
-      this.output.appendLine(`[${new Date().toLocaleTimeString()}] Data Transforming...`);
       const { fileName, editor, document, textRange } = writable;
-      try {
-        const options = {
-          reverse: Settings.reverse,
-          isSnapshot: true
-        }
-        const db = this.mockServer.getValidDb(
-          args?.fsPath || document?.uri?.fsPath,
-          [],
-          options,
-          Settings.entryCallback,
-          Settings.finalCallback,
-        );
-        this.writeFile(JSON.stringify(db, null, "\t"), fileName, "Data Transformed Successfully", editor, document, textRange);
-        this.output.appendLine(`[${new Date().toLocaleTimeString()}] [Done] Data Transformed Successfully`);
-      } catch (err) {
-        this.output.appendLine(`[${new Date().toLocaleTimeString()}] [Done] Failed to Transform Data`);
-        this.output.appendLine(err);
-        Prompt.showPopupMessage(`Failed to Transform Data. \n${err.message}`, "error");
-      }
-    }
-  };
+      const userData = requireData(args?.fsPath || document?.uri?.fsPath);
+      const db = extractDbFromHAR(
+        userData as HAR,
+        Settings.callbacks?._harEntryCallback,
+        Settings.callbacks?._harDbCallback,
+      ) || extractDbFromKibana(
+        userData as KIBANA,
+        Settings.callbacks?._kibanaHitsCallback,
+        Settings.callbacks?._kibanaDbCallback,
+      ) || userData;
 
-  startServer = async (txt: string, dbPath?: string) => {
-    this.output.appendLine(`\n[${new Date().toLocaleTimeString()}] [Running] Server ${txt} initiated`);
-    try {
-      const paths = Settings.paths;
-      const _dbPath = dbPath || paths.db;
-      this.output.appendLine(`[${new Date().toLocaleTimeString()}] Server ${txt}ing...`);
-      StatusbarUi.working(`${txt}ing...`);
-
-      const db = await this.getDataFromUrl(_dbPath) as Db;
-      this.mockServer.setConfig(Settings.config);
-      await this.mockServer.launchServer(
-        db,
-        paths.middleware,
-        paths.injectors,
-        paths.rewriters,
-        paths.store
+      cleanDb(db as UserTypes.Db);
+      this.writeFile(
+        JSON.stringify(db, null, '\t'),
+        fileName,
+        'Data Transformed Successfully',
+        editor,
+        document,
+        textRange
       );
-      this.restartOnChange(this.restartServer);
-      const statusMsg = `Server is ${txt}ed at port : ${Settings.port}`;
-      StatusbarUi.stopServer(150, Settings.port, () => Prompt.showPopupMessage(statusMsg, "info"));
-      this.output.appendLine(`[${new Date().toLocaleTimeString()}] [Done] Server is ${txt}ed at port : ${Settings.port}`);
-    } catch (err) {
-      this.output.appendLine(`[${new Date().toLocaleTimeString()}] [Done] Server Failed to ${txt}`);
-      this.output.appendLine(err);
-      const statusMsg = `Server Failed to ${txt}. \n ${err.message}`;
-      StatusbarUi.startServer(0, () => Prompt.showPopupMessage(statusMsg, "error"));
+    } else {
+      throw Error("Invalid File or path");
     }
   };
 
-  stopServer = async () => {
-    this.output.appendLine(`\n[${new Date().toLocaleTimeString()}] [Running] Server Stop initiated`);
-    try {
-      this.output.appendLine(`[${new Date().toLocaleTimeString()}] Server Stopping`);
-      if (this.mockServer.server) {
-        StatusbarUi.working("Stopping...");
-        await this.mockServer.stopServer();
-        await this.stopWatchingChanges();
-        StatusbarUi.startServer(150, () => Prompt.showPopupMessage("Server is Stopped", "info"));
-        this.output.appendLine(`[${new Date().toLocaleTimeString()}] [Done] Server is Stopped`);
-      } else {
-        this.output.appendLine(`[${new Date().toLocaleTimeString()}] [Done] No Server to Stop`);
-        Prompt.showPopupMessage("No Server to Stop", "error");
-        StatusbarUi.stopServer(0, Settings.port, () => Prompt.showPopupMessage("No Server to Stop", "error"));
-      }
-    } catch (err) {
-      this.output.appendLine(`[${new Date().toLocaleTimeString()}] [Done] Server Failed to Stop`);
-      this.output.appendLine(err);
-      const statsMsg = `Server Failed to Stop. \n${err.message}`;
-      StatusbarUi.stopServer(0, Settings.port, () => Prompt.showPopupMessage(statsMsg, "error"));
+  setPort = async (_args?: any) => {
+    const port = await Prompt.showInputBox('Enter Port Number', Settings.port);
+    if (port) {
+      Settings.port = parseInt(port);
+      Prompt.showPopupMessage(`Port Number Set to ${port}`, 'info');
+      this.log(`[Done] Port Number Set to ${port}`);
+    }
+  };
+
+  setRoot = async (args?: any) => {
+    if (!args?.fsPath) { return; }
+    const stat = fs.statSync(args.fsPath);
+    const rootPath = stat.isFile() ? path.dirname(args.fsPath) : args.fsPath;
+    Settings.rootPath = rootPath;
+    Prompt.showPopupMessage(`Root Path Set to ${rootPath}`, 'info');
+    this.log(`[Done] Root Path Set to ${rootPath}`);
+  };
+
+  startServer = async (dbPath?: string) => {
+    const paths = Settings.paths;
+    const _dbPath = dbPath || paths.db;
+    const db = (await this.getDbWithEnv(_dbPath?.replace(/\\/g, '/'))) as ValidTypes.Db;
+    this.mockServer.setConfig(Settings.config);
+    await this.mockServer.launchServer(db, paths.injectors, paths.middleware, paths.rewriters, paths.store);
+    this.restartOnChange(this.restartServer, db);
+  };
+
+  stopServer = async (isRestarting?: boolean) => {
+    if (this.mockServer.server) {
+      await this.mockServer.stopServer();
+      await this.stopWatchingChanges();
+    } else {
+      throw Error("No Server to Stop");
     }
   };
 
   restartServer = async (args?: any) => {
     if (this.mockServer.server) {
       try {
-        this.output.appendLine(`\n[${new Date().toLocaleTimeString()}] [Running] Server Stop initiated`);
-        this.output.appendLine(`[${new Date().toLocaleTimeString()}] Server Stopping`);
-        StatusbarUi.working("Stopping...");
-        await this.mockServer.stopServer();
-        await this.stopWatchingChanges();
-        this.output.appendLine(`[${new Date().toLocaleTimeString()}] [Done] Server Stopped`);
-        await this.startServer("Restart", args?.fsPath);
-      } catch (err) {
-        this.output.appendLine(`[${new Date().toLocaleTimeString()}] [Done] Server Failed to Stop`);
-        StatusbarUi.stopServer(0, Settings.port);
-        this.output.appendLine(err);
+        this.log(`[Running] Server Restart initiated`, '\n');
+        this.log(`Server Restarting...`);
+        StatusbarUi.working('Restarting...');
+        await this.stopServer(true);
+        await this.startServer(args?.fsPath);
+        const statusMsg = `Server is Restarted at port : ${Settings.port}`;
+        this.log(`[Done] ${statusMsg}`);
+        StatusbarUi.stopServer(150, Settings.port, () => Prompt.showPopupMessage(statusMsg, 'info'));
+      } catch (error: any) {
+        this.log(`[Done] Server Failed to Restart`);
+        this.log(error);
+        const statusMsg = `Server Failed to Restart. \n${error.message}`;
+        StatusbarUi.startServer(0, () => Prompt.showPopupMessage(statusMsg, 'error'));
       }
     } else {
-      await this.startServer("Start", args?.fsPath);
+      try {
+        this.log(`[Running] Server Start initiated`, '\n');
+        this.log(`Server Starting...`);
+        StatusbarUi.working('Staring...');
+        await this.startServer(args?.fsPath);
+        const statusMsg = `Server is Started at port : ${Settings.port}`;
+        this.log(`[Done] ${statusMsg}`);
+        StatusbarUi.stopServer(150, Settings.port, () => Prompt.showPopupMessage(statusMsg, 'info'));
+      } catch (error: any) {
+        this.log(`[Done] Server Failed to Start`);
+        this.log(error);
+        const statusMsg = `Server Failed to Start. \n${error.message}`;
+        StatusbarUi.startServer(0, () => Prompt.showPopupMessage(statusMsg, 'error'));
+      }
     }
   };
 
-  getDbSnapshot = async (args?: any) => {
-    this.output.appendLine(`\n[${new Date().toLocaleTimeString()}] [Running] Db Snapshot initiated`);
-    const writable = await this.getWritable([".json"], TRANSFORM_TO_MOCK_SERVER_DB, true);
-    if (writable) {
-      this.output.appendLine(`[${new Date().toLocaleTimeString()}] Getting Db Snapshot..`);
-      const { editor, document, textRange } = writable;
-      try {
-        const db = JSON.parse(JSON.stringify(this.mockServer.db));
-        const snapShot = getDbSnapShot(db);
-        const snapShotPath = args?.fsPath || path.join(Settings.paths.snapshotDir || 'snapshots', `/db-${Date.now()}.json`);
-        this.writeFile(JSON.stringify(snapShot, null, "\t"), snapShotPath, "Db Snapshot retrieved Successfully", editor, document, textRange);
-        this.output.appendLine(`[${new Date().toLocaleTimeString()}] [Done] Db Snapshot retrieved Successfully`);
-      } catch (err) {
-        this.output.appendLine(`[${new Date().toLocaleTimeString()}] [Done] Failed to get Db Snapshot`);
-        this.output.appendLine(err);
-        Prompt.showPopupMessage(`Failed to get Db Snapshot. \n${err.message}`, "error");
+  switchEnvironment = async () => {
+    this.log(`[Running] Switch Environment initiated`, "\n");
+    this.log(`Switching Environment...`);
+    try {
+      const envDir = Settings.paths.envDir;
+      if (envDir?.length) {
+        const envList = this.getEnvironmentList(envDir);
+        if (envList && envList.length) {
+          const environmentList = [...new Set(['none', ...envList.map((e) => e.fileName)])];
+
+          // making the selected environment to appear in first of the list
+          const selectedEnvIndex = environmentList.findIndex((e) => e === Settings.environment.toLowerCase());
+          if (selectedEnvIndex >= 0) {
+            environmentList.splice(selectedEnvIndex, 1);
+            environmentList.unshift(Settings.environment.toLowerCase());
+          } else {
+            Settings.environment = 'none';
+          }
+
+          const env = await Prompt.getEnvironment(environmentList);
+          if (env) {
+            this.environment = env.toLowerCase();
+            this.log(`[Done] Environment Switched to ${this.environment}`);
+            this.restartServer();
+          }
+        } else {
+          this.log(`[Done] No Environment Found`);
+          Prompt.showPopupMessage('No Environment Found', 'error');
+        }
+      } else {
+        this.log(`'mock-server.settings.paths.envPath' - Please provide a valid path here`);
+        Prompt.showPopupMessage(`'mock-server.settings.paths.envPath' - Please provide a valid path here`, 'error');
       }
+    } catch (err: any) {
+      this.log(`[Done] Something went wrong`);
+      this.log(err);
+      Prompt.showPopupMessage(`Something went wrong`, 'error');
+    }
+  };
+
+  getDbSnapshot = async (_args?: any) => {
+    const writable = await this.getWritable(['.json'], Commands.TRANSFORM_TO_MOCK_SERVER_DB, true);
+    if (writable) {
+      const { editor, document, textRange } = writable;
+      const db = JSON.parse(JSON.stringify(this.mockServer.db));
+      cleanDb(db);
+      const snapShotPath = path.join(Settings.paths.snapshotDir || 'snapshots', `/db-${Date.now()}.json`);
+      this.writeFile(
+        JSON.stringify(db, null, '\t'),
+        snapShotPath,
+        'Db Snapshot retrieved Successfully',
+        editor,
+        document,
+        textRange
+      );
+    } else {
+      throw Error("Invalid File or path");
     }
   };
 
   generateMockFiles = async (args?: any) => {
-    this.output.appendLine('\nCreating Samples...');
-    createSampleFiles(args?.fsPath || Settings.paths.root);
-    this.output.appendLine('Sample files created !');
-  }
+    await createSampleFiles(args?.fsPath || Settings.rootPath);
+  };
 }
